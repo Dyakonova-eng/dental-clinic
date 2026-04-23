@@ -1,0 +1,185 @@
+{
+  "name": "Smile Clinic — Обработка заявок",
+  "description": "Сценарий Make (Integromat) для обработки заявок с сайта, классификации, отправки в Telegram и Google Sheets",
+  "version": "1.0",
+  "flow": [
+    {
+      "id": 1,
+      "module": "webhook",
+      "name": "Получение заявки с сайта",
+      "type": "trigger",
+      "config": {
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "dataStructure": {
+          "source": "string (booking_form | quiz)",
+          "name": "string",
+          "phone": "string",
+          "service": "string",
+          "date": "string (optional)",
+          "time": "string (optional)",
+          "comment": "string (optional)",
+          "leadType": "string (hot | warm | standard)",
+          "estimatedValue": "string",
+          "quizCompleted": "boolean",
+          "quizData": "object (optional)",
+          "timestamp": "string (ISO 8601)"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "module": "router",
+      "name": "Классификация заявки",
+      "type": "router",
+      "description": "Маршрутизация по типу лида: hot → срочное уведомление, warm/standard → обычное",
+      "routes": [
+        {
+          "name": "Горячий лид (имплантация, протезирование, ортодонтия)",
+          "condition": "leadType == 'hot'",
+          "target": 3
+        },
+        {
+          "name": "Тёплый лид (лечение, отбеливание)",
+          "condition": "leadType == 'warm'",
+          "target": 4
+        },
+        {
+          "name": "Стандартный лид (гигиена, консультация)",
+          "condition": "leadType == 'standard'",
+          "target": 5
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "module": "telegram-bot-api",
+      "name": "🔥 СРОЧНО: Telegram уведомление (горячий лид)",
+      "type": "action",
+      "config": {
+        "botToken": "{{TELEGRAM_BOT_TOKEN}}",
+        "chatId": "{{OWNER_CHAT_ID}}",
+        "parseMode": "HTML",
+        "messageTemplate": "🔥🔥🔥 <b>ГОРЯЧАЯ ЗАЯВКА!</b>\n\n👤 <b>{{name}}</b>\n📞 {{phone}}\n🏥 {{service}}\n📅 {{date}} в {{time}}\n💬 {{comment}}\n\n💰 Ожидаемый чек: <b>{{estimatedValue}}</b>\n🧠 Квиз: {{quizCompleted ? 'Пройден' : 'Нет'}}\n📊 Источник: {{source}}\n\n⚠️ <b>ПЕРЕЗВОНИТЕ В ТЕЧЕНИЕ 5 МИНУТ!</b>",
+        "replyMarkup": {
+          "inline_keyboard": [
+            [
+              {"text": "📞 Перезвонить", "callback_data": "call_{{phone}}"},
+              {"text": "✅ Подтвердить", "callback_data": "confirm_{{timestamp}}"}
+            ],
+            [
+              {"text": "⏰ Напомнить через 30 мин", "callback_data": "remind_30_{{timestamp}}"},
+              {"text": "❌ Отклонить", "callback_data": "reject_{{timestamp}}"}
+            ]
+          ]
+        }
+      },
+      "next": 6
+    },
+    {
+      "id": 4,
+      "module": "telegram-bot-api",
+      "name": "🟡 Telegram уведомление (тёплый лид)",
+      "type": "action",
+      "config": {
+        "botToken": "{{TELEGRAM_BOT_TOKEN}}",
+        "chatId": "{{OWNER_CHAT_ID}}",
+        "parseMode": "HTML",
+        "messageTemplate": "🟡 <b>Новая заявка</b>\n\n👤 {{name}}\n📞 {{phone}}\n🏥 {{service}}\n📅 {{date}} в {{time}}\n💬 {{comment}}\n\n💰 Чек: {{estimatedValue}}\n\nСвяжитесь в течение 15 минут.",
+        "replyMarkup": {
+          "inline_keyboard": [
+            [
+              {"text": "📞 Перезвонить", "callback_data": "call_{{phone}}"},
+              {"text": "✅ Подтвердить", "callback_data": "confirm_{{timestamp}}"}
+            ]
+          ]
+        }
+      },
+      "next": 6
+    },
+    {
+      "id": 5,
+      "module": "telegram-bot-api",
+      "name": "📋 Telegram уведомление (стандартный лид)",
+      "type": "action",
+      "config": {
+        "botToken": "{{TELEGRAM_BOT_TOKEN}}",
+        "chatId": "{{OWNER_CHAT_ID}}",
+        "parseMode": "HTML",
+        "messageTemplate": "📋 <b>Заявка на приём</b>\n\n👤 {{name}}\n📞 {{phone}}\n🏥 {{service}}\n📅 {{date}} в {{time}}\n\n💰 Чек: {{estimatedValue}}"
+      },
+      "next": 6
+    },
+    {
+      "id": 6,
+      "module": "google-sheets",
+      "name": "📊 Запись в Google Sheets",
+      "type": "action",
+      "config": {
+        "spreadsheetId": "{{GOOGLE_SHEET_ID}}",
+        "sheetName": "Заявки",
+        "action": "addRow",
+        "columns": {
+          "A": "={{formatDate(timestamp, 'DD.MM.YYYY HH:mm')}}",
+          "B": "={{name}}",
+          "C": "={{phone}}",
+          "D": "={{service}}",
+          "E": "={{date}}",
+          "F": "={{time}}",
+          "G": "={{comment}}",
+          "H": "={{leadType}}",
+          "I": "={{estimatedValue}}",
+          "J": "={{source}}",
+          "K": "Новая",
+          "L": "={{quizCompleted}}"
+        },
+        "headerRow": ["Дата", "Имя", "Телефон", "Услуга", "Дата приёма", "Время", "Комментарий", "Тип лида", "Ожидаемый чек", "Источник", "Статус", "Квиз"]
+      },
+      "next": 7
+    },
+    {
+      "id": 7,
+      "module": "sms-or-whatsapp",
+      "name": "✉️ Подтверждение клиенту",
+      "type": "action",
+      "config": {
+        "to": "={{phone}}",
+        "messageTemplate": "✅ {{name}}, спасибо за заявку в Smile Clinic!\n\nМы получили вашу запись и свяжемся с вами в течение 15 минут для подтверждения.\n\n📞 Если срочно — звоните: +7 (495) 123-45-67\n\nSmile Clinic — ваша идеальная улыбка 🦷"
+      },
+      "next": 8
+    },
+    {
+      "id": 8,
+      "module": "delay",
+      "name": "⏰ Ожидание 24 часа",
+      "type": "action",
+      "config": {
+        "delay": 86400,
+        "unit": "seconds",
+        "description": "Ждём 24 часа перед отправкой напоминания"
+      },
+      "next": 9
+    },
+    {
+      "id": 9,
+      "module": "sms-or-whatsapp",
+      "name": "🔔 Напоминание за 24 часа",
+      "type": "action",
+      "config": {
+        "to": "={{phone}}",
+        "messageTemplate": "🔔 {{name}}, напоминаем о записи в Smile Clinic!\n\n📅 Дата: {{date}}\n⏰ Время: {{time}}\n📍 Адрес: г. Москва, ул. Тверская, д. 15\n\n❓ Если нужно перенести — позвоните: +7 (495) 123-45-67\n\nЖдём вас! 😊"
+      }
+    }
+  ],
+  "variables": {
+    "TELEGRAM_BOT_TOKEN": "ВСТАВЬТЕ_ТОКЕН_БОТА",
+    "OWNER_CHAT_ID": "ВСТАВЬТЕ_CHAT_ID_ВЛАДЕЛЬЦА",
+    "GOOGLE_SHEET_ID": "ВСТАВЬТЕ_ID_ТАБЛИЦЫ"
+  },
+  "notes": {
+    "setup": "1. Создайте Webhook модуль в Make. 2. Скопируйте URL webhook. 3. Вставьте URL в script.js (WEBHOOK_URL). 4. Настройте Telegram бота через @BotFather. 5. Создайте Google Sheets таблицу.",
+    "testing": "Отправьте тестовую заявку через форму на сайте. Проверьте: Telegram, Google Sheets, SMS."
+  }
+}
